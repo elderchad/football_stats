@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nfl
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: games-cache
+  namespace: nfl
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfl-api
+  namespace: nfl
+  labels:
+    app: nfl-api
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfl-api
+  template:
+    metadata:
+      labels:
+        app: nfl-api
+    spec:
+      containers:
+        - name: api
+          image: nfl-record-walk-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: GAMES_CACHE_PATH
+              value: /data/games.csv
+            - name: HISTORICAL_CACHE_PATH
+              value: /data/nfl_elo.csv
+            - name: QB_STATS_CACHE_DIR
+              value: /data/qb_stats
+            - name: NCAAF_CACHE_DIR
+              value: /data/ncaaf
+            - name: NCAAF_HISTORY_CACHE_DIR
+              value: /data/ncaaf_history
+          volumeMounts:
+            - name: cache
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: games-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfl-api
+  namespace: nfl
+spec:
+  selector:
+    app: nfl-api
+  ports:
+    - port: 8000
+      targetPort: 8000

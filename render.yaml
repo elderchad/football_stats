@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: nfl-record-walk
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Free instances have no persistent disk, so the data caches live in /tmp.
+      - key: GAMES_CACHE_PATH
+        value: /tmp/nfl/games.csv
+      - key: HISTORICAL_CACHE_PATH
+        value: /tmp/nfl/nfl_elo.csv
+      - key: QB_STATS_CACHE_DIR
+        value: /tmp/nfl/qb_stats
+      - key: NCAAF_CACHE_DIR
+        value: /tmp/nfl/ncaaf
+      - key: NCAAF_HISTORY_CACHE_DIR
+        value: /tmp/nfl/ncaaf_history
+      - key: STATIC_DIR
+        value: /srv/static

@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfl-web
+  namespace: nfl
+  labels:
+    app: nfl-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nfl-web
+  template:
+    metadata:
+      labels:
+        app: nfl-web
+    spec:
+      containers:
+        - name: web
+          image: nfl-record-walk-web:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          env:
+            - name: API_UPSTREAM
+              value: http://nfl-api.nfl.svc.cluster.local:8000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfl-web
+  namespace: nfl
+spec:
+  type: NodePort
+  selector:
+    app: nfl-web
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
