@@ -45,17 +45,24 @@ interface Props {
   connectNulls?: boolean
   angledTicks?: boolean
   lineWidth?: number
+  lineType?: 'linear' | 'step' | 'stepBefore' | 'stepAfter'
+  aspectRatio?: number
+  minHeight?: number
+  maxHeight?: number
+  /** Fixed y extent, instead of measuring the data. */
+  yBounds?: [number, number]
+  yTickFormatter?: (value: number) => string
+  yTickStep?: number
 }
 
-const ASPECT = 2.2
-const MIN_HEIGHT = 340
-const MAX_HEIGHT = 780
+const DEFAULT_ASPECT = 2.2
+const DEFAULT_MIN_HEIGHT = 340
+const DEFAULT_MAX_HEIGHT = 780
 const MARGIN = { top: 20, right: 24, bottom: 8, left: 8 }
 const Y_AXIS_WIDTH = 64
 const MIN_X_SPAN = 3
 const LABEL_LIMIT = 14
 const MAX_MARKERS = 400
-const MINIMAP = { width: 184, height: 76 }
 const LABEL_OFFSETS = [-20, 20, -42, 42, -64, 64, -86, 86]
 
 let measureContext: CanvasRenderingContext2D | null | undefined
@@ -185,12 +192,23 @@ interface MiniMapProps {
   xKey: string
   series: ChartSeries[]
   full: View
+  width: number
+  height: number
+  lineType?: 'linear' | 'step' | 'stepBefore' | 'stepAfter'
 }
 
-const MiniMapLines = memo(function MiniMapLines({ data, xKey, series, full }: MiniMapProps) {
-  const stride = Math.max(1, Math.ceil(data.length / MINIMAP.width))
-  const sx = (x: number) => ((x - full.x0) / (full.x1 - full.x0)) * MINIMAP.width
-  const sy = (y: number) => ((full.y1 - y) / (full.y1 - full.y0)) * MINIMAP.height
+const MiniMapLines = memo(function MiniMapLines({
+  data,
+  xKey,
+  series,
+  full,
+  width,
+  height,
+  lineType = 'linear',
+}: MiniMapProps) {
+  const stride = Math.max(1, Math.ceil(data.length / width))
+  const sx = (x: number) => ((x - full.x0) / (full.x1 - full.x0)) * width
+  const sy = (y: number) => ((full.y1 - y) / (full.y1 - full.y0)) * height
   return (
     <>
       {series.map((entry) => {
@@ -202,8 +220,16 @@ const MiniMapLines = memo(function MiniMapLines({ data, xKey, series, full }: Mi
             pen = false
             continue
           }
-          path += `${pen ? 'L' : 'M'}${sx(Number(data[index][xKey])).toFixed(1)},${sy(value).toFixed(1)}`
-          pen = true
+          const curX = sx(Number(data[index][xKey]))
+          const curY = sy(value)
+          if (!pen) {
+            path += `M${curX.toFixed(1)},${curY.toFixed(1)}`
+            pen = true
+          } else if (lineType === 'stepAfter') {
+            path += `H${curX.toFixed(1)}V${curY.toFixed(1)}`
+          } else {
+            path += `L${curX.toFixed(1)},${curY.toFixed(1)}`
+          }
         }
         return <path key={entry.key} d={path} fill="none" stroke={entry.color} strokeWidth={1} strokeOpacity={0.8} />
       })}
@@ -224,6 +250,13 @@ export default function ZoomChart({
   connectNulls = false,
   angledTicks = false,
   lineWidth = 1.8,
+  lineType = 'linear',
+  aspectRatio = DEFAULT_ASPECT,
+  minHeight = DEFAULT_MIN_HEIGHT,
+  maxHeight = DEFAULT_MAX_HEIGHT,
+  yBounds,
+  yTickFormatter,
+  yTickStep,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
@@ -242,7 +275,7 @@ export default function ZoomChart({
     return () => observer.disconnect()
   }, [])
 
-  const height = Math.round(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, width / ASPECT)))
+  const height = Math.round(Math.min(maxHeight, Math.max(minHeight, width / aspectRatio)))
   const xAxisHeight = angledTicks ? 64 : xLabel ? 44 : 30
   const plot = {
     left: MARGIN.left + Y_AXIS_WIDTH,
@@ -268,8 +301,13 @@ export default function ZoomChart({
     const pad = Math.max(1, (hi - lo) * 0.05)
     const x0 = xs[0]
     const x1 = xs[xs.length - 1]
-    return { x0, x1: x1 > x0 ? x1 : x0 + 1, y0: lo - pad, y1: hi + pad }
-  }, [data, series, xs])
+    return {
+      x0,
+      x1: x1 > x0 ? x1 : x0 + 1,
+      y0: yBounds ? yBounds[0] : lo - pad,
+      y1: yBounds ? yBounds[1] : hi + pad,
+    }
+  }, [data, series, xs, yBounds])
 
   useEffect(() => {
     viewRef.current = null
@@ -419,11 +457,12 @@ export default function ZoomChart({
   const xTickLabels = useMemo(() => new Map(xTicks.map((tick) => [tick.value, tick.label])), [xTicks])
   const yTicks = useMemo(() => {
     if (!current) return []
-    const step = niceStep(current.y1 - current.y0, Math.max(3, Math.floor(plot.height / 48)), 1)
+    const step =
+      yTickStep ?? niceStep(current.y1 - current.y0, Math.max(3, Math.floor(plot.height / 48)), 1)
     const values: number[] = []
     for (let value = Math.ceil(current.y0 / step) * step; value <= current.y1; value += step) values.push(value)
     return values
-  }, [current, plot.height])
+  }, [current, plot.height, yTickStep])
 
   const rowByX = useMemo(() => new Map(data.map((row) => [Number(row[xKey]), row])), [data, xKey])
   const colorBySeries = useMemo(() => new Map(series.map((entry) => [entry.key, entry.color])), [series])
@@ -459,6 +498,13 @@ export default function ZoomChart({
     return { markers: placed.slice(0, MAX_MARKERS), hiddenCount: hidden }
   }, [events, current, colorBySeries, nameBySeries, series.length, rowByX, level, plot.left, plot.top, plot.width, plot.height])
 
+  const minimapSize = useMemo(() => {
+    if (height < 320) {
+      return { width: 140, height: 48 }
+    }
+    return { width: 184, height: 76 }
+  }, [height])
+
   const labels = useMemo(() => {
     const focus = hovered ? markers.filter((marker) => marker.series === hovered) : []
     let candidates = focus.length && focus.length <= LABEL_LIMIT ? focus : []
@@ -472,8 +518,13 @@ export default function ZoomChart({
     }
     const obstacles: { x0: number; x1: number; y0: number; y1: number }[] = []
     if (zoomed) {
-      const left = width - MARGIN.right - 8 - MINIMAP.width
-      obstacles.push({ x0: left, x1: left + MINIMAP.width, y0: plot.top + 8, y1: plot.top + 8 + MINIMAP.height })
+      const left = width - MARGIN.right - 8 - minimapSize.width
+      obstacles.push({
+        x0: left,
+        x1: left + minimapSize.width,
+        y0: plot.top + 8,
+        y1: plot.top + 8 + minimapSize.height,
+      })
     }
     const result = []
     for (const marker of [...candidates].sort((a, b) => a.priority - b.priority || a.px - b.px)) {
@@ -492,7 +543,7 @@ export default function ZoomChart({
       }
     }
     return result
-  }, [markers, hovered, zoomed, width, plot.left, plot.top, plot.width, plot.height])
+  }, [markers, hovered, zoomed, width, minimapSize, plot.left, plot.top, plot.width, plot.height])
 
   const hoverLabel = hoveredEvent === null ? null : markers.find((marker) => marker.id === hoveredEvent)
   const renderActiveDot = (props: DotProps): ReactElement => {
@@ -508,10 +559,10 @@ export default function ZoomChart({
   const minimap =
     zoomed && full && current
       ? {
-          x: ((current.x0 - full.x0) / (full.x1 - full.x0)) * MINIMAP.width,
-          y: ((full.y1 - current.y1) / (full.y1 - full.y0)) * MINIMAP.height,
-          w: ((current.x1 - current.x0) / (full.x1 - full.x0)) * MINIMAP.width,
-          h: ((current.y1 - current.y0) / (full.y1 - full.y0)) * MINIMAP.height,
+          x: ((current.x0 - full.x0) / (full.x1 - full.x0)) * minimapSize.width,
+          y: ((full.y1 - current.y1) / (full.y1 - full.y0)) * minimapSize.height,
+          w: ((current.x1 - current.x0) / (full.x1 - full.x0)) * minimapSize.width,
+          h: ((current.y1 - current.y0) / (full.y1 - full.y0)) * minimapSize.height,
         }
       : null
 
@@ -595,6 +646,7 @@ export default function ZoomChart({
               allowDataOverflow
               ticks={yTicks}
               interval={0}
+              tickFormatter={yTickFormatter}
               stroke="#7b839c"
               width={Y_AXIS_WIDTH}
               label={{ value: yLabel, angle: -90, position: 'insideLeft', fill: '#7b839c' }}
@@ -621,7 +673,7 @@ export default function ZoomChart({
             {series.map((entry) => (
               <Line
                 key={entry.key}
-                type="linear"
+                type={lineType}
                 dataKey={entry.key}
                 name={entry.name}
                 stroke={entry.color}
@@ -688,8 +740,8 @@ export default function ZoomChart({
         {minimap && full && (
           <svg
             className="zoom-minimap"
-            width={MINIMAP.width}
-            height={MINIMAP.height}
+            width={minimapSize.width}
+            height={minimapSize.height}
             style={{ top: plot.top + 8, right: MARGIN.right + 8 }}
             onPointerDown={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId)
@@ -698,7 +750,15 @@ export default function ZoomChart({
             onPointerMove={centerFromMinimap}
             onDoubleClick={(event) => event.stopPropagation()}
           >
-            <MiniMapLines data={data} xKey={xKey} series={series} full={full} />
+            <MiniMapLines
+              data={data}
+              xKey={xKey}
+              series={series}
+              full={full}
+              width={minimapSize.width}
+              height={minimapSize.height}
+              lineType={lineType}
+            />
             <rect x={minimap.x} y={minimap.y} width={Math.max(2, minimap.w)} height={Math.max(2, minimap.h)} className="zoom-minimap-view" />
           </svg>
         )}

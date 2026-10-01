@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import os
 import threading
@@ -12,6 +13,7 @@ from .audit import run_audit
 from .data import get_games
 from .ncaaf import NCAAF_TEAMS, RIVALRIES, build_ncaaf_records, get_ncaaf_games
 from .ncaaf_history import SEASON_RECORDS, load_head_to_head, load_team_histories
+from .ncaaf_rankings import AP_POLL_START, build_rankings, get_season_rankings
 from .qb_records import build_qb_records, build_qb_td_int, build_qb_timeline, list_quarterbacks
 from .qb_stats import get_qb_game_stats
 from .records import build_records
@@ -48,6 +50,15 @@ def warm_cache() -> None:
         target=get_qb_game_stats, args=(latest,), name="qb-stats-warmup", daemon=True
     ).start()
     threading.Thread(target=get_ncaaf_games, name="ncaaf-warmup", daemon=True).start()
+    threading.Thread(target=_warm_rankings, name="rankings-warmup", daemon=True).start()
+
+
+def _warm_rankings() -> None:
+    for season in range(AP_POLL_START, dt.date.today().year + 1):
+        try:
+            get_season_rankings(season)
+        except Exception:  # noqa: BLE001 - warm-up must never crash the worker
+            logging.exception("Could not warm %s rankings", season)
 
 
 @app.get("/api/health")
@@ -157,6 +168,26 @@ def ncaaf_records(
     if start > end:
         raise HTTPException(status_code=400, detail="start_season must be <= end_season")
     return build_ncaaf_records(games, start, end, game_mode, rivalry)
+
+
+@app.get("/api/ncaaf/rankings")
+def ncaaf_rankings(
+    start_season: int | None = Query(default=None, ge=1870, le=2100),
+    end_season: int | None = Query(default=None, ge=1870, le=2100),
+    rivalry: str = Query(default="holy-war", pattern="^(holy-war|the-game|iron-bowl|red-river)$"),
+) -> dict:
+    teams = tuple(RIVALRIES[rivalry]["teams"])
+    latest = max((game.season for game in get_ncaaf_games()), default=AP_POLL_START)
+    payload = build_rankings(
+        teams,
+        start_season or AP_POLL_START,
+        end_season or latest,
+        latest,
+    )
+    if not payload["steps"]:
+        raise HTTPException(status_code=503, detail="AP Poll data unavailable")
+    payload["rivalry_id"] = rivalry
+    return payload
 
 
 @app.get("/api/records")

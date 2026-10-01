@@ -21,6 +21,7 @@ from .ncaaf_history import (
     load_head_to_head,
     load_team_histories,
 )
+from .ncaaf_scores import load_historical_games
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class NcaafGame:
     away: str
     home_score: int
     away_score: int
+    label: str = ""
 
     @property
     def winner(self) -> str | None:
@@ -234,9 +236,45 @@ def get_ncaaf_games() -> list[NcaafGame]:
                         NcaafGame(season, 99 + index, "bowl", team, opponent, home_score, away_score)
                     )
         games.sort(key=lambda game: (game.season, game.week))
+        games = _historical_games() + games
         _games = games
-        log.info("Loaded %d Utah/BYU games", len(games))
+        log.info("Loaded %d NCAAF games", len(games))
         return games
+
+
+def _historical_games() -> list[NcaafGame]:
+    """Pre-2001 games from the historical scores pages, de-duplicated across programs."""
+    seen: set[tuple[int, int, frozenset[str], frozenset[int]]] = set()
+    games: list[NcaafGame] = []
+    for team_games in load_historical_games(tuple(NCAAF_TEAMS)).values():
+        for game in team_games:
+            if game.season >= NCAAF_START_SEASON:
+                continue
+            key = (game.season, game.week, frozenset((game.team, game.opponent)),
+                   frozenset((game.points_for, game.points_against)))
+            if key in seen:
+                continue
+            seen.add(key)
+            games.append(NcaafGame(
+                season=game.season,
+                week=game.week,
+                game_type="bowl" if game.is_bowl else "regular",
+                home=game.team,
+                away=game.opponent,
+                home_score=game.points_for,
+                away_score=game.points_against,
+                label=game.postseason_name if game.is_bowl else _date_label(game.date),
+            ))
+    games.sort(key=lambda game: (game.season, game.week))
+    return games
+
+
+def _date_label(date: str) -> str:
+    month, _, day = date.partition("/")
+    try:
+        return f"{dt.date(2000, int(month), 1):%b} {int(day)}"
+    except ValueError:
+        return date
 
 
 def _mode_allowed(game: NcaafGame, mode: str) -> bool:
@@ -306,45 +344,54 @@ def build_ncaaf_records(
     stats = {team: {"wins": 0, "losses": 0, "ties": 0, "values": []} for team in teams}
     steps = []
 
-    historical_seasons = sorted({
-        season
-        for team_records in SEASON_RECORDS.values()
-        for season in team_records
-        if start_season <= season <= min(end_season, NCAAF_START_SEASON - 1)
-    })
-    for season in historical_seasons:
-        steps.append({"season": season, "week": 0, "label": f"{season} Season"})
-        for team in teams:
-            record = SEASON_RECORDS.get(team, {}).get(season)
-            if record is None:
-                stats[team]["values"].append(values[team])
-                continue
-            wins, losses, ties = record
-            bowls = BOWL_OUTCOMES.get(team, {}).get(season, ())
-            if game_mode == "regular" and bowls:
-                wins -= bowls.count("W")
-                losses -= bowls.count("L")
-                ties -= bowls.count("T")
-            elif game_mode == "bowl":
-                wins, losses, ties = (
-                    bowls.count("W"), bowls.count("L"), bowls.count("T")
-                )
-            stats[team]["wins"] += wins
-            stats[team]["losses"] += losses
-            stats[team]["ties"] += ties
-            values[team] += wins - losses
-            stats[team]["values"].append(values[team])
+    # Seasons missing from a program's own game-by-game page fall back to its season record.
+    covered = {
+        (team, game.season)
+        for team, team_games in load_historical_games(teams).items()
+        for game in team_games
+    } | {(team, game.season) for game in games if game.season >= NCAAF_START_SEASON
+         for team in (game.home, game.away)}
+    fallback: dict[int, dict[str, tuple[int, int, int]]] = {}
+    for team in teams:
+        for season, record in SEASON_RECORDS.get(team, {}).items():
+            if (
+                start_season <= season <= min(end_season, NCAAF_START_SEASON - 1)
+                and (team, season) not in covered
+            ):
+                fallback.setdefault(season, {})[team] = record
+    for season in fallback:
+        buckets.setdefault((season, 2, 0), [])
 
     for season, phase, week in sorted(buckets):
+        if phase == 2:
+            steps.append({"season": season, "week": 0, "label": f"{season} Season"})
+            for team, (wins, losses, ties) in fallback[season].items():
+                bowls = BOWL_OUTCOMES.get(team, {}).get(season, ())
+                if game_mode == "regular" and bowls:
+                    wins -= bowls.count("W")
+                    losses -= bowls.count("L")
+                    ties -= bowls.count("T")
+                elif game_mode == "bowl":
+                    wins, losses, ties = bowls.count("W"), bowls.count("L"), bowls.count("T")
+                stats[team]["wins"] += wins
+                stats[team]["losses"] += losses
+                stats[team]["ties"] += ties
+                values[team] += wins - losses
+            for team in teams:
+                stats[team]["values"].append(values[team])
+            continue
+
         games_this_week = buckets[(season, phase, week)]
+        first = games_this_week[0]
         steps.append({
             "season": season,
             "week": week,
-            "label": f"{season} {'Bowl' if games_this_week[0].game_type == 'bowl' else f'Wk {week}'}",
+            "label": f"{season} "
+            + (first.label or ("Bowl" if first.game_type == "bowl" else f"Wk {week}")),
         })
         for game in games_this_week:
             for team in teams:
-                if team not in (game.home, game.away):
+                if team not in (game.home, game.away) or (team, season) not in covered:
                     continue
                 if game.winner is None:
                     stats[team]["ties"] += 1

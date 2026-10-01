@@ -12,7 +12,10 @@ a loss, flat for a tie**, stepping one position to the right for each game week.
 - **NCAAF rivalries** — compare Utah–BYU, Michigan–Ohio State, Alabama–Auburn, or
   Texas–Oklahoma across each program's full history. Modes include all games, regular
   season, bowls, and direct head-to-head meetings. Pre-2001 program points are
-  season-level; newer results are game-by-game.
+  game-by-game from James Howell's historical scores database (seasons it does not cover
+  fall back to one season-total step); newer results come from cfbfastR. Each rivalry also
+  has an **AP rankings** view plotting both programs' weekly AP Poll position since 1936,
+  with #1 at the top of the chart and unranked on the baseline.
 
 Each quarterback metric has **Game-by-game** and **Season timeline** views. Game-by-game
 aligns each line at career game one; the season timeline uses a shared 1920-to-present
@@ -103,7 +106,9 @@ npm run dev
 | 1920&ndash;1998 | FiveThirtyEight Elo dataset, read from the [Internet Archive](https://web.archive.org/web/2023id_/https://projects.fivethirtyeight.com/nfl-api/nfl_elo.csv) | FiveThirtyEight shut down, so the archived snapshot is used. Franchises are already normalised onto modern abbreviations. Starting quarterback names are present from 1950. No week column, so weeks are derived by clustering game dates. |
 | 1999&ndash;present | [nflverse/nfldata](https://github.com/nflverse/nfldata) | Still maintained, refreshed every 12 hours. |
 | Per-game passing (TD/INT) | [nflverse-data `stats_player_week`](https://github.com/nflverse/nflverse-data/releases/tag/stats_player) | 1999 onwards only. Downloaded once per season and filtered to the tracked quarterbacks. |
-| NCAAF history | Published program season, bowl, and rivalry histories | Season-level W/L/T through 2000 plus direct rivalry results. |
+| NCAAF history | Published program season, bowl, and rivalry histories | Season W/L/T fallback for seasons without game-level coverage, bowl outcomes, titles, and direct rivalry results. |
+| NCAAF historical games | [James Howell's college football scores](https://www.jhowell.net/cf/scores/ScoresIndex.htm) | Game-by-game results for each program through 2000; also cross-checks cfbfastR from 2001 on. |
+| NCAAF rankings | Wikipedia per-season rankings articles | Weekly AP Poll positions from 1936 onwards. |
 | NCAAF schedules | [cfbfastR-data](https://github.com/sportsdataverse/cfbfastR-data) | Game-level results from 2001 onwards. Pre-2023 bowl omissions are supplemented from published program histories. |
 
 Both files are cached in the `games-cache` volume, so the app works offline after the
@@ -125,6 +130,7 @@ first run.
 | `GET /api/ncaaf/teams?rivalry=` | The two programs in a rivalry. |
 | `GET /api/ncaaf/seasons?rivalry=` | Available seasons for the selected rivalry. |
 | `GET /api/ncaaf/records?rivalry=&start_season=&end_season=&game_mode=` | Cumulative records; mode is `all`, `regular`, `bowl`, or `head_to_head`. |
+| `GET /api/ncaaf/rankings?rivalry=&start_season=&end_season=` | Weekly AP Poll position for both programs, 1936&ndash;present. `25` is #1, `1` is #25, `0` is unranked. |
 | `GET /api/audit?refresh=` | Data-completeness audit: structural checks plus cross-checks against FiveThirtyEight, nflverse standings/season totals, published career totals, and published NCAAF season/rivalry records. Also shown on the **Data audit** tab. |
 
 Relocated franchises are merged onto their current abbreviation (OAK→LV, SD→LAC, STL→LAR),
