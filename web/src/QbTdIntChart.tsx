@@ -3,6 +3,7 @@ import type { TooltipProps } from 'recharts'
 import { fetchQbTdInt, fetchQuarterbacks } from './api'
 import type { GameMode, QbTdIntResponse, Quarterback } from './api'
 import GameModeControl from './GameModeControl'
+import useSelection from './useSelection'
 import ZoomChart, { numericTicks } from './ZoomChart'
 import type { ChartEvent } from './ZoomChart'
 
@@ -58,7 +59,7 @@ interface Props {
 
 export default function QbTdIntChart({ metric }: Props) {
   const [quarterbacks, setQuarterbacks] = useState<Quarterback[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const { selected, setSelected, initializeSelection } = useSelection('qb-selection')
   const [gameMode, setGameMode] = useState<GameMode>('all')
   const [hovered, setHovered] = useState<string | null>(null)
   const [records, setRecords] = useState<QbTdIntResponse | null>(null)
@@ -69,7 +70,7 @@ export default function QbTdIntChart({ metric }: Props) {
     fetchQuarterbacks()
       .then((list) => {
         setQuarterbacks(list)
-        setSelected(new Set(list.map((qb) => qb.id)))
+        initializeSelection(new Set(list.map((qb) => qb.id)))
       })
       .catch((err: Error) => {
         setError(err.message)

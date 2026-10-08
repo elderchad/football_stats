@@ -223,7 +223,7 @@ button:hover {
 
 .chart-card {
   position: relative;
-  background: var(--panel);
+  background: #000000;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 8px;
@@ -294,6 +294,7 @@ button:hover {
 
 .zoom-surface {
   position: relative;
+  background: #000000;
   width: 100%;
   overflow: hidden;
   cursor: zoom-in;
@@ -333,7 +334,7 @@ button:hover {
 
 .zoom-minimap {
   position: absolute;
-  background: rgba(13, 16, 25, 0.92);
+  background: #000000;
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: crosshair;

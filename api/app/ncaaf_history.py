@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from urllib.parse import quote
 
 import httpx
@@ -75,16 +76,33 @@ def _cached_wikitext(page: str) -> str:
     if os.path.exists(path):
         with open(path, encoding="utf-8") as handle:
             return handle.read()
-    response = httpx.get(
-        MEDIAWIKI_URL.format(page=quote(page)),
-        headers={"User-Agent": "FootballRecordWalk/1.0"},
-        timeout=60.0,
-    )
-    response.raise_for_status()
-    text = response.json()["parse"]["wikitext"]["*"]
+    text = _fetch_wikitext(page)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
     return text
+
+
+class PageNotFound(Exception):
+    """The wiki has no such page."""
+
+
+def _fetch_wikitext(page: str) -> str:
+    """Wikipedia rate-limits bursts of requests, so retry with a growing pause."""
+    for attempt in range(5):
+        response = httpx.get(
+            MEDIAWIKI_URL.format(page=quote(page)),
+            headers={"User-Agent": "FootballRecordWalk/1.0"},
+            timeout=60.0,
+        )
+        if response.status_code == 429:
+            time.sleep(1.5 * 2**attempt)
+            continue
+        response.raise_for_status()
+        payload = response.json()
+        if "parse" not in payload:
+            raise PageNotFound(page)
+        return payload["parse"]["wikitext"]["*"]
+    raise RuntimeError(f"Wikipedia kept rate-limiting requests for {page!r}")
 
 
 def _parse_seasons(

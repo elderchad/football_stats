@@ -3,6 +3,7 @@ import type { TooltipProps } from 'recharts'
 import { fetchQbRecords, fetchQuarterbacks } from './api'
 import type { GameMode, QbRecordsResponse, Quarterback } from './api'
 import GameModeControl from './GameModeControl'
+import useSelection from './useSelection'
 import ZoomChart, { numericTicks } from './ZoomChart'
 import type { ChartEvent } from './ZoomChart'
 
@@ -32,7 +33,7 @@ function QbTooltip({ active, payload, label, labels }: QbTooltipProps) {
 
   return (
     <div className="tooltip">
-      <div className="tooltip-title">Game {step} of career</div>
+      <div className="tooltip-title">Start {step} of career</div>
       {shown.map((entry) => (
         <div key={entry.dataKey as string} className="tooltip-row qb">
           <span className="swatch" style={{ background: entry.color }} />
@@ -54,7 +55,7 @@ function QbTooltip({ active, payload, label, labels }: QbTooltipProps) {
 
 export default function QbChart() {
   const [quarterbacks, setQuarterbacks] = useState<Quarterback[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const { selected, setSelected, initializeSelection } = useSelection('qb-selection')
   const [gameMode, setGameMode] = useState<GameMode>('all')
   const [hovered, setHovered] = useState<string | null>(null)
   const [records, setRecords] = useState<QbRecordsResponse | null>(null)
@@ -65,7 +66,7 @@ export default function QbChart() {
     fetchQuarterbacks()
       .then((list) => {
         setQuarterbacks(list)
-        setSelected(new Set(list.map((qb) => qb.id)))
+        initializeSelection(new Set(list.map((qb) => qb.id)))
       })
       .catch((err: Error) => {
         setError(err.message)
@@ -129,8 +130,8 @@ export default function QbChart() {
       <p className="lede">
         Every quarterback starts at the baseline in his first NFL season. The line steps
         <strong> +1</strong> for a win, <strong>&minus;1</strong> for a loss and holds flat
-        on a tie, following <strong>his team&apos;s</strong> results for every week of his
-        career. Lines are aligned at game one so careers can be compared directly.
+        on a tie, counting only games <strong>he started</strong>.
+        Lines are aligned at start one so careers can be compared directly.
       </p>
 
       <section className="controls">
@@ -183,7 +184,7 @@ export default function QbChart() {
           series={chartSeries}
           ticks={numericTicks}
           tooltip={<QbTooltip labels={labelMap} />}
-          xLabel="Games into career"
+          xLabel="Starts into career"
           yLabel="Cumulative wins − losses"
           events={events}
           hovered={hovered}
@@ -224,15 +225,15 @@ export default function QbChart() {
 
       {truncated.length > 0 && (
         <p className="note">
-          Play-by-play coverage begins in 1999, so{' '}
-          {truncated.map((qb) => qb.name).join(', ')} start from their 1999 season rather
-          than their true rookie year.
+          Starter-name coverage begins in 1950, so{' '}
+          {truncated.map((qb) => qb.name).join(', ')} have incomplete early-career coverage.
+          Games without a verified starter name are not counted.
         </p>
       )}
 
       {ranking.length > 0 && (
         <section className="standings">
-          <h2>Career team record</h2>
+          <h2>Record as starting quarterback</h2>
           <table>
             <thead>
               <tr>

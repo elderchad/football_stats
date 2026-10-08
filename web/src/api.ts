@@ -23,6 +23,7 @@ export interface Step {
 
 export type EventKind =
   | 'title'
+  | 'mvp'
   | 'runnerup'
   | 'conference'
   | 'arrival'
@@ -224,6 +225,36 @@ export const fetchNcaafTeams = (rivalry: string) =>
 
 export const fetchNcaafSeasons = (rivalry: string) =>
   getJson<SeasonsResponse>(`/api/ncaaf/seasons?rivalry=${encodeURIComponent(rivalry)}`)
+
+export interface NcaafRankingSeries {
+  team: string
+  /** 25 for #1 down to 1 for #25; 0 when unranked. */
+  values: number[]
+  polls: number
+  ranked: number
+  best: number | null
+  weeks_at_1: number
+  final: number
+}
+
+export interface NcaafRankingsResponse {
+  steps: Step[]
+  series: NcaafRankingSeries[]
+  start_season: number
+  end_season: number
+  rivalry_id: string
+  poll: string
+  poll_size: number
+  missing_seasons: number[]
+  first_poll_season: number
+}
+
+export const fetchNcaafRankings = (rivalry: string, start?: number, end?: number) =>
+  getJson<NcaafRankingsResponse>(
+    `/api/ncaaf/rankings?rivalry=${encodeURIComponent(rivalry)}` +
+      (start ? `&start_season=${start}` : '') +
+      (end ? `&end_season=${end}` : ''),
+  )
 
 export function fetchNcaafRecords(
   startSeason: number,

@@ -11,6 +11,30 @@ from .quarterbacks import QUARTERBACKS
 
 AFL_FRANCHISES = frozenset({"BUF", "NE", "NYJ", "TEN", "DEN", "KC", "LAC", "LV", "MIA", "CIN"})
 
+AP_MVP_SEASONS: dict[str, tuple[int, ...]] = {
+    "unitas": (1959, 1964, 1967),
+    "starr": (1966,),
+    "stabler": (1974,),
+    "tarkenton": (1975,),
+    "bradshaw": (1978,),
+    "marino": (1984,),
+    "elway": (1987,),
+    "montana": (1989, 1990),
+    "young": (1992, 1994),
+    "favre": (1995, 1996, 1997),
+    "warner": (1999, 2001),
+    "pmanning": (2003, 2004, 2008, 2009, 2013),
+    "brady": (2007, 2010, 2017),
+    "rodgers": (2011, 2014, 2020, 2021),
+    "newton": (2015,),
+    "ryan": (2016,),
+    "mahomes": (2018, 2022),
+    "jackson": (2019, 2023),
+    "allen": (2024,),
+    "stafford": (2025,),
+}
+AP_MVP_SOURCE = "https://en.wikipedia.org/wiki/AP_NFL_Most_Valuable_Player"
+
 # Champions decided by standings, before the first championship game in 1933.
 STANDINGS_CHAMPIONS = {
     1920: "AKR", 1921: "CHI", 1922: "CBD", 1923: "CBD", 1925: "ARI", 1926: "FYJ",

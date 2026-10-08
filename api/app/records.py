@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from .data import POSTSEASON_TYPES, REGULAR_SEASON, Game
 from .events import franchise_events, place_events
+from .teams import TEAMS
 
 GAME_MODES = ("all", "regular", "playoffs", "superbowls")
 
@@ -81,6 +82,10 @@ def build_records(
     teams = sorted({t for g in scoped for t in (g.home, g.away)})
     series = {team: Series(team=team) for team in teams}
     current: dict[str, int] = {}
+    last_games = {
+        team: max((game.season, game.week) for game in scoped if team in (game.home, game.away))
+        for team in teams if team not in TEAMS
+    }
 
     for step_index, key in enumerate(ordered_keys):
         for game in buckets[key]:
@@ -101,7 +106,9 @@ def build_records(
                 series[game.away].ties += 1
 
         for team in teams:
-            series[team].values.append(current.get(team))
+            series[team].values.append(
+                None if team in last_games and key > last_games[team] else current.get(team)
+            )
 
     step_dicts = [{"season": s.season, "week": s.week, "label": s.label} for s in steps]
     team_set = set(teams)
@@ -119,7 +126,7 @@ def build_records(
                 "wins": s.wins,
                 "losses": s.losses,
                 "ties": s.ties,
-                "final": s.values[-1],
+                "final": s.wins - s.losses,
             }
             for s in series.values()
         ],

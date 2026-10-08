@@ -74,13 +74,19 @@ export default function App() {
             {' · '}
             <a href="https://github.com/sportsdataverse/cfbfastR-data">cfbfastR-data</a>
             {' · '}
+            <a href="https://www.jhowell.net/cf/scores/ScoresIndex.htm">James Howell historical scores</a>
+            {' · '}
             published season and rivalry histories
           </>
         ) : (
           <>
             <a href="https://github.com/sportsdataverse/cfbfastR-data">cfbfastR-data</a>
             {' · '}
+            <a href="https://www.jhowell.net/cf/scores/ScoresIndex.htm">James Howell historical scores</a>
+            {' · '}
             <a href="https://en.wikipedia.org/wiki/List_of_Utah_Utes_football_seasons">published season/bowl histories</a>
+            {' · '}
+            <a href="https://en.wikipedia.org/wiki/AP_Poll">AP Poll rankings</a>
           </>
         )}
       </footer>

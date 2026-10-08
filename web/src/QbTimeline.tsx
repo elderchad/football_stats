@@ -3,13 +3,14 @@ import type { TooltipProps } from 'recharts'
 import { fetchQbTimeline, fetchQuarterbacks } from './api'
 import type { GameMode, QbTimelineMetric, QbTimelineResponse, Quarterback } from './api'
 import GameModeControl from './GameModeControl'
+import useSelection from './useSelection'
 import ZoomChart, { numericTicks } from './ZoomChart'
 import type { ChartEvent } from './ZoomChart'
 
 type ChartRow = { season: number } & Record<string, number | null>
 
 const METRIC_LABELS: Record<QbTimelineMetric, string> = {
-  games: 'Cumulative team wins − losses',
+  games: 'Cumulative starting QB wins − losses',
   td: 'Cumulative passing TDs',
   int: 'Cumulative interceptions',
   td_int: 'Cumulative passing TD − INT',
@@ -39,7 +40,7 @@ function TimelineTooltip({ active, payload, label }: TooltipProps<number, string
 
   return (
     <div className="tooltip">
-      <div className="tooltip-title">{label} season</div>
+      <div className="tooltip-title">Through the end of the {label} season</div>
       {entries.slice(0, 12).map((entry) => (
         <div key={entry.dataKey as string} className="tooltip-row qb">
           <span className="swatch" style={{ background: entry.color }} />
@@ -61,7 +62,7 @@ interface Props {
 
 export default function QbTimeline({ metric }: Props) {
   const [quarterbacks, setQuarterbacks] = useState<Quarterback[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const { selected, setSelected, initializeSelection } = useSelection('qb-selection')
   const [gameMode, setGameMode] = useState<GameMode>('all')
   const [hovered, setHovered] = useState<string | null>(null)
   const [records, setRecords] = useState<QbTimelineResponse | null>(null)
@@ -72,7 +73,7 @@ export default function QbTimeline({ metric }: Props) {
     fetchQuarterbacks()
       .then((list) => {
         setQuarterbacks(list)
-        setSelected(new Set(list.map((qb) => qb.id)))
+        initializeSelection(new Set(list.map((qb) => qb.id)))
       })
       .catch((err: Error) => {
         setError(err.message)
@@ -119,7 +120,7 @@ export default function QbTimeline({ metric }: Props) {
 
   const description =
     metric === 'games'
-      ? 'Each season adds that quarterback’s team wins minus losses to a running total.'
+      ? 'Each season adds wins minus losses in games that quarterback started to a running total.'
       : metric === 'td'
         ? 'Each season adds the quarterback’s passing touchdowns to a running total.'
         : metric === 'int'
@@ -130,8 +131,11 @@ export default function QbTimeline({ metric }: Props) {
     <>
       <p className="lede">
         Each line starts at zero. {description} The x-axis is the full NFL timeline; each
-        line appears only during the quarterback’s career.
+        point is the running total through the end of its labelled season.
       </p>
+      {metric === 'games' && (
+        <p className="note">Starter names are available from 1950. Earlier starts are not inferred.</p>
+      )}
 
       <section className="controls">
         <GameModeControl value={gameMode} onChange={setGameMode} includeSuperBowls />

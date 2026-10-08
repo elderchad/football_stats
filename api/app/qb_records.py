@@ -1,9 +1,9 @@
-"""Cumulative win/loss walks for a quarterback's team across his career."""
+"""Cumulative results of quarterback starts and individual passing statistics."""
 
 from __future__ import annotations
 
 from .data import REGULAR_SEASON, Game
-from .events import title_game_event
+from .events import AP_MVP_SEASONS, title_game_event
 from .qb_stats import STATS_START_SEASON, get_qb_game_stats
 from .quarterbacks import QUARTERBACKS, Quarterback
 from .records import game_type_allowed, week_label
@@ -47,6 +47,23 @@ def _event(x: int, season: int, kind: str, label: str, priority: int) -> dict:
     return {"x": x, "kind": kind, "label": f"{season} · {label}", "priority": priority}
 
 
+def _mvp_events(qb_id: str, points: list[tuple[int, int, bool]]) -> list[dict]:
+    anchors: dict[int, int] = {}
+    regular: dict[int, int] = {}
+    for season, position, is_regular in points:
+        anchors[season] = position
+        if is_regular:
+            regular[season] = position
+    return [
+        _event(
+            regular.get(season, anchors[season]), season, "mvp",
+            "AP NFL MVP (co-winner)" if (qb_id, season) in (("favre", 1997), ("pmanning", 2003))
+            else "AP NFL MVP", 1,
+        )
+        for season in AP_MVP_SEASONS.get(qb_id, ()) if season in anchors
+    ]
+
+
 def last_start_seasons(games: list[Game]) -> dict[str, int]:
     """Latest season in which each named quarterback started a game."""
     latest: dict[str, int] = {}
@@ -57,6 +74,15 @@ def last_start_seasons(games: list[Game]) -> dict[str, int]:
                 if game.season > latest.get(key, 0):
                     latest[key] = game.season
     return latest
+
+
+def _started_team(game: Game, qb: Quarterback) -> str | None:
+    name = qb.name.casefold()
+    if game.home_qb.casefold() == name:
+        return game.home
+    if game.away_qb.casefold() == name:
+        return game.away
+    return None
 
 
 def _resolved_stints(qb: Quarterback, latest: dict[str, int]) -> list[tuple[str, int, int]]:
@@ -71,7 +97,7 @@ def _resolved_stints(qb: Quarterback, latest: dict[str, int]) -> list[tuple[str,
 
 def list_quarterbacks(games: list[Game]) -> list[dict]:
     latest = last_start_seasons(games)
-    data_floor = min((g.season for g in games), default=1999)
+    data_floor = max(1950, min((g.season for g in games), default=1999))
 
     entries = []
     for qb in QUARTERBACKS:
@@ -117,18 +143,12 @@ def build_qb_records(
             dict.fromkeys(
                 game
                 for game in scoped
-                for team, start, end in stints
-                if start <= game.season <= end and team in (game.home, game.away)
+                if _started_team(game, qb) is not None
             ),
             key=lambda g: (g.season, g.week),
         )
         if not career:
             continue
-
-        team_of: dict[int, str] = {}
-        for team, start, end in stints:
-            for season in range(start, end + 1):
-                team_of[season] = team
 
         values: list[int] = [0]
         labels: list[str] = ["Career start"]
@@ -139,7 +159,7 @@ def build_qb_records(
         previous_team: str | None = None
 
         for game in career:
-            team = team_of[game.season]
+            team = _started_team(game, qb)
             if game.is_tie:
                 ties += 1
             elif game.winner == team:
@@ -176,7 +196,10 @@ def build_qb_records(
                 "losses": losses,
                 "ties": ties,
                 "final": total,
-                "events": events,
+                "events": events + _mvp_events(qb.id, [
+                    (game.season, index + 1, game.game_type == REGULAR_SEASON)
+                    for index, game in enumerate(career)
+                ]),
             }
         )
 
@@ -272,7 +295,10 @@ def build_qb_td_int(
                 "games": len(rows),
                 "first_season": rows[0]["season"],
                 "final": total,
-                "events": events,
+                "events": events + _mvp_events(qb.id, [
+                    (row["season"], index + 1, row["season_type"] == REGULAR_SEASON)
+                    for index, row in enumerate(rows)
+                ]),
             }
         )
 
@@ -299,13 +325,6 @@ def build_qb_timeline(
     super_bowl_team_weeks = _super_bowl_team_weeks(games)
     title_games = _title_games(games)
 
-    team_games: dict[tuple[int, str], list[Game]] = {}
-    if metric == "games":
-        for game in games:
-            if game_type_allowed(game.game_type, game_mode):
-                team_games.setdefault((game.season, game.home), []).append(game)
-                team_games.setdefault((game.season, game.away), []).append(game)
-
     season_stats: dict[tuple[str, int], dict[str, int]] = {}
     if metric != "games":
         for qb_id, rows in get_qb_game_stats(latest_season).items():
@@ -329,6 +348,17 @@ def build_qb_timeline(
 
         first_career_season = min(start for _, start, _ in stints)
         career_end_season = max(end for _, _, end in stints)
+        if metric != "games":
+            career_end_season = max(
+                career_end_season,
+                max((season for qb_id, season in season_stats if qb_id == qb.id), default=career_end_season),
+            )
+        starts = [game for game in games if _started_team(game, qb) is not None]
+        if metric == "games":
+            if not starts:
+                continue
+            first_career_season = min(game.season for game in starts)
+            career_end_season = max(game.season for game in starts)
         first_data_season = (
             first_career_season
             if metric == "games"
@@ -350,14 +380,16 @@ def build_qb_timeline(
             team = team_by_season.get(season)
 
             if metric == "games":
-                if first_career_season <= season <= career_end_season and not team:
-                    values[index] = cumulative
+                if not first_career_season <= season <= career_end_season:
                     continue
-                if not team:
-                    continue
-                played = team_games.get((season, team), [])
+                played = [
+                    game for game in starts
+                    if game.season == season
+                    and game_type_allowed(game.game_type, game_mode)
+                ]
                 net = sum(
-                    1 if game.winner == team else -1 if game.loser == team else 0
+                    1 if game.winner == _started_team(game, qb)
+                    else -1 if game.loser == _started_team(game, qb) else 0
                     for game in played
                 )
                 totals["games"] += len(played)
@@ -390,7 +422,7 @@ def build_qb_timeline(
             for season in range(start, min(end, latest_season) + 1):
                 for game in title_games.get((season, team), []):
                     title = title_game_event(game, team)
-                    if title:
+                    if title and (metric != "games" or _started_team(game, qb) == team):
                         events.append(_event(season, season, title["kind"], title["label"], title["priority"]))
         series.append(
             {
@@ -404,7 +436,10 @@ def build_qb_timeline(
                 "interceptions": totals["int"],
                 "final": cumulative,
                 "first_season": first_data_season,
-                "events": events,
+                "events": events + _mvp_events(qb.id, [
+                    (season, season, True) for index, season in enumerate(seasons)
+                    if values[index] is not None
+                ]),
             }
         )
 

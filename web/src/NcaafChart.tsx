@@ -13,6 +13,8 @@ import type {
   NcaafTeam,
 } from './api'
 import NcaafModeControl from './NcaafModeControl'
+import useSelection from './useSelection'
+import NcaafRankings from './NcaafRankings'
 import ZoomChart, { stepTicks } from './ZoomChart'
 import type { ChartEvent, ChartRow } from './ZoomChart'
 
@@ -60,11 +62,12 @@ export default function NcaafChart() {
   const [startSeason, setStartSeason] = useState<number | null>(null)
   const [endSeason, setEndSeason] = useState<number | null>(null)
   const [gameMode, setGameMode] = useState<NcaafGameMode>('all')
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const { selected, setSelected, initializeSelection } = useSelection(`ncaaf-selection-${rivalryId}`)
   const [hovered, setHovered] = useState<string | null>(null)
   const [records, setRecords] = useState<NcaafRecordsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [view, setView] = useState<'record' | 'rankings'>('record')
 
   useEffect(() => {
     fetchNcaafRivalries()
@@ -75,7 +78,6 @@ export default function NcaafChart() {
   useEffect(() => {
     setLoading(true)
     setTeams([])
-    setSelected(new Set())
     setRecords(null)
     setStartSeason(null)
     setEndSeason(null)
@@ -83,7 +85,7 @@ export default function NcaafChart() {
       .then(([teamList, seasonData]) => {
         setTeams(teamList)
         setSeasons(seasonData.seasons)
-        setSelected(new Set(teamList.map((team) => team.abbr)))
+        initializeSelection(new Set(teamList.map((team) => team.abbr)))
         setStartSeason(seasonData.min)
         setEndSeason(seasonData.max)
       })
@@ -139,19 +141,61 @@ export default function NcaafChart() {
       return next
     })
 
+  const chips = (
+    <section className="teams">
+      {teams.map((team) => (
+        <button
+          key={team.abbr}
+          type="button"
+          className={`team-chip${selected.has(team.abbr) ? '' : ' off'}`}
+          style={{ borderColor: team.color }}
+          onClick={() => toggleTeam(team.abbr)}
+          onMouseEnter={() => setHovered(team.abbr)}
+          onMouseLeave={() => setHovered(null)}
+        >
+          <span className="swatch" style={{ background: team.color }} />
+          {team.name}
+        </button>
+      ))}
+      <button type="button" className="chip-action" onClick={() => setSelected(new Set(teams.map((team) => team.abbr)))}>
+        Select All
+      </button>
+      <button type="button" className="chip-action" onClick={() => setSelected(new Set())}>
+        Deselect All
+      </button>
+    </section>
+  )
+
   return (
     <>
       <div className="section-heading">
         <div>
           <h2>{rivalry?.name ?? 'College Football Rivalry'}</h2>
           <p className="lede">
-            {gameMode === 'head_to_head'
-              ? 'Only direct meetings count. The winner steps +1, the loser −1, and a tie stays flat.'
-              : 'A direct program comparison. Each line steps +1 for a win, −1 for a loss, and stays flat for a tie.'}
+            {view === 'rankings'
+              ? 'Weekly AP Poll position for both programs. The top of the chart is #1 and the bottom is unranked, so a rising line is a team climbing the poll.'
+              : gameMode === 'head_to_head'
+                ? 'Only direct meetings count. The winner steps +1, the loser −1, and a tie stays flat.'
+                : 'A direct program comparison. Each line steps +1 for a win, −1 for a loss, and stays flat for a tie.'}
           </p>
         </div>
         <span className="rivalry-mark">{rivalry?.nickname ?? 'Rivalry'}</span>
       </div>
+
+      <nav className="tabs sub resolution-tabs" role="tablist" aria-label="College view">
+        {([['record', 'Win–loss walk'], ['rankings', 'AP rankings']] as const).map(([id, text]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={view === id}
+            className={`tab${view === id ? ' active' : ''}`}
+            onClick={() => setView(id)}
+          >
+            {text}
+          </button>
+        ))}
+      </nav>
 
       <section className="controls">
         <label>
@@ -174,7 +218,7 @@ export default function NcaafChart() {
             {seasons.map((season) => <option key={season}>{season}</option>)}
           </select>
         </label>
-        <NcaafModeControl value={gameMode} onChange={setGameMode} />
+        {view === 'record' && <NcaafModeControl value={gameMode} onChange={setGameMode} />}
         <div className="button-group">
           <button type="button" onClick={() => setSelected(new Set(teams.map((team) => team.abbr)))}>All teams</button>
           <button type="button" onClick={() => setSelected(new Set())}>None</button>
@@ -183,46 +227,38 @@ export default function NcaafChart() {
 
       {error && <div className="error">Could not load data: {error}</div>}
 
-      <section className="chart-card rivalry-chart">
-        {loading && <div className="status">Loading college results&hellip;</div>}
-        <ZoomChart
-          data={chartData}
-          xKey="x"
-          series={chartSeries}
-          ticks={ticks}
-          tooltip={<NcaafTooltip />}
-          yLabel="Cumulative wins − losses"
-          events={events}
+      {view === 'rankings' ? (
+        <NcaafRankings
+          rivalryId={rivalryId}
+          teams={teams}
+          selected={selected}
           hovered={hovered}
-          angledTicks
-          lineWidth={2.4}
+          onHover={setHovered}
+          chips={chips}
+          startSeason={startSeason}
+          endSeason={endSeason}
         />
-      </section>
+      ) : (
+        <>
+          <section className="chart-card rivalry-chart">
+            {loading && <div className="status">Loading college results&hellip;</div>}
+            <ZoomChart
+              data={chartData}
+              xKey="x"
+              series={chartSeries}
+              ticks={ticks}
+              tooltip={<NcaafTooltip />}
+              yLabel="Cumulative wins − losses"
+              events={events}
+              hovered={hovered}
+              angledTicks
+              lineWidth={2.4}
+            />
+          </section>
 
-      <section className="teams">
-        {teams.map((team) => (
-          <button
-            key={team.abbr}
-            type="button"
-            className={`team-chip${selected.has(team.abbr) ? '' : ' off'}`}
-            style={{ borderColor: team.color }}
-            onClick={() => toggleTeam(team.abbr)}
-            onMouseEnter={() => setHovered(team.abbr)}
-            onMouseLeave={() => setHovered(null)}
-          >
-            <span className="swatch" style={{ background: team.color }} />
-            {team.name}
-          </button>
-        ))}
-        <button type="button" className="chip-action" onClick={() => setSelected(new Set(teams.map((team) => team.abbr)))}>
-          Select All
-        </button>
-        <button type="button" className="chip-action" onClick={() => setSelected(new Set())}>
-          Deselect All
-        </button>
-      </section>
+          {chips}
 
-      <section className="standings">
+          <section className="standings">
         <h2>
           {gameMode === 'head_to_head' ? 'Head-to-head record' : 'Program record'}, {' '}
           {records?.start_season}&ndash;{records?.end_season}
@@ -243,10 +279,14 @@ export default function NcaafChart() {
       </section>
 
       <p className="note coverage-note">
-        Pre-2001 program results are season-level published records; 2001 onward is
-        game-by-game cfbfastR data. Head to Head uses published rivalry results before
-        2001 and game-level results thereafter.
+        Pre-2001 results are game-by-game from James Howell&apos;s historical scores database;
+        the few seasons it does not cover (mostly before 1905) appear as a single season-total
+        step. 2001 onward is game-by-game cfbfastR data. Head to Head uses published rivalry
+        results before 2001 and game-level results thereafter. See the Data audit tab for
+        coverage and cross-source checks.
       </p>
+        </>
+      )}
     </>
   )
 }

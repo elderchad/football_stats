@@ -3,6 +3,8 @@ import type { TooltipProps } from 'recharts'
 import { fetchRecords, fetchSeasons, fetchTeams } from './api'
 import type { RecordsResponse, Team, TeamGameMode } from './api'
 import GameModeControl from './GameModeControl'
+import useSelection from './useSelection'
+import DivisionChart from './DivisionChart'
 import ZoomChart, { numericTicks, stepTicks } from './ZoomChart'
 import type { ChartEvent, ChartRow } from './ZoomChart'
 
@@ -137,19 +139,19 @@ export default function TeamChart() {
   const [endSeason, setEndSeason] = useState<number | null>(null)
   const [gameMode, setGameMode] = useState<TeamGameMode>('all')
   const [showDefunct, setShowDefunct] = useState(false)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const { selected, setSelected, initializeSelection } = useSelection('franchise-selection')
   const [hovered, setHovered] = useState<string | null>(null)
   const [records, setRecords] = useState<RecordsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [resolution, setResolution] = useState<'season' | 'game'>('season')
+  const [resolution, setResolution] = useState<'season' | 'game' | 'divisions'>('season')
 
   useEffect(() => {
     Promise.all([fetchTeams(), fetchSeasons()])
       .then(([teamList, seasons]) => {
         setTeams(teamList)
         setSeasonList(seasons.seasons)
-        setSelected(
+        initializeSelection(
           new Set(teamList.filter((team) => !team.defunct).map((team) => team.abbr)),
         )
         setStartSeason(seasons.min)
@@ -232,7 +234,7 @@ export default function TeamChart() {
   return (
     <>
       <nav className="tabs sub resolution-tabs" role="tablist" aria-label="Time resolution">
-        {([['season', 'Season timeline'], ['game', 'Game-by-game']] as const).map(([id, text]) => (
+        {([['season', 'Season timeline'], ['game', 'Game-by-game'], ['divisions', 'Divisions']] as const).map(([id, text]) => (
           <button
             key={id}
             type="button"
@@ -247,11 +249,21 @@ export default function TeamChart() {
       </nav>
 
       <p className="lede">
-        Each line starts at the baseline and steps <strong>+1</strong> for a win,
-        <strong> &minus;1</strong> for a loss, and holds flat on a tie &mdash;{' '}
-        {resolution === 'game'
-          ? 'one step per game the franchise played. Lines are aligned at game one so franchises can be compared directly.'
-          : 'one step per week of the season.'}
+        {resolution === 'divisions' ? (
+          <>
+            Each bar is the combined wins minus losses of selected franchises in a division, using
+            today&apos;s alignment &mdash; e.g. NFC North is DET + GB + CHI + MIN. A franchise&apos;s
+            whole history in the selected range counts toward its current division.
+          </>
+        ) : (
+          <>
+            Each line starts at the baseline and steps <strong>+1</strong> for a win,
+            <strong> &minus;1</strong> for a loss, and holds flat on a tie &mdash;{' '}
+            {resolution === 'game'
+              ? 'one step per game the franchise played. Lines are aligned at game one so franchises can be compared directly.'
+              : 'one step per week of the season.'}
+          </>
+        )}
       </p>
 
       <section className="controls">
@@ -285,6 +297,8 @@ export default function TeamChart() {
 
         <GameModeControl value={gameMode} onChange={setGameMode} includeSuperBowls />
 
+        {resolution !== 'divisions' && (
+        <>
         <label className="checkbox">
           <input
             type="checkbox"
@@ -319,10 +333,19 @@ export default function TeamChart() {
             </button>
           ))}
         </div>
+        </>
+        )}
       </section>
 
       {error && <div className="error">Could not load data: {error}</div>}
 
+      {resolution === 'divisions' ? (
+        <>
+          {loading && <div className="note">Loading NFL results&hellip;</div>}
+          <DivisionChart records={records} teams={teams} selected={selected} />
+        </>
+      ) : (
+      <>
       <section className="chart-card">
         {loading && <div className="status">Loading NFL results&hellip;</div>}
         {gameByGame ? (
@@ -423,6 +446,8 @@ export default function TeamChart() {
             </tbody>
           </table>
         </section>
+      )}
+      </>
       )}
     </>
   )

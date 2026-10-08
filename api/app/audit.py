@@ -29,6 +29,7 @@ from .data import (
 )
 from .ncaaf import NCAAF_START_SEASON, NCAAF_TEAMS, RIVALRIES, get_ncaaf_games
 from .ncaaf_history import (
+    BOWL_OUTCOMES,
     SEASON_RECORDS,
     TEAM_HISTORY_PAGES,
     _cached_wikitext,
@@ -36,7 +37,8 @@ from .ncaaf_history import (
     load_head_to_head,
     load_team_histories,
 )
-from .qb_records import _resolved_stints, last_start_seasons
+from .ncaaf_scores import load_historical_games
+from .qb_records import build_qb_records, build_qb_td_int, build_qb_timeline
 from .qb_stats import STATS_CACHE_DIR, STATS_START_SEASON, get_qb_game_stats
 from .quarterbacks import QUARTERBACKS
 from .teams import normalize
@@ -331,7 +333,6 @@ def _season_totals(season: int, kind: str, names: dict[str, str]) -> dict[str, t
 def _qb_checks(games: list[Game]) -> list[dict]:
     latest_season = max(g.season for g in games)
     stats = get_qb_game_stats(latest_season)
-    latest_start = last_start_seasons(games)
     names = {qb.name.casefold(): qb.id for qb in QUARTERBACKS}
     results = []
 
@@ -408,34 +409,50 @@ def _qb_checks(games: list[Game]) -> list[dict]:
         "Retired QBs fully inside 1999+", len(PUBLISHED_CAREER_TOTALS), career_issues,
     ))
 
-    # 4. The Games walk counts team results during stint seasons; show how that differs
-    #    from games the QB actually started.
     start_issues = []
     checked = 0
+    walks = {series["id"]: series for series in build_qb_records(games, None, "all")["series"]}
+    annual = {series["id"]: series for series in build_qb_timeline(games, None, "all", "games")["series"]}
     for qb in QUARTERBACKS:
-        stints = _resolved_stints(qb, latest_start)
-        team_games = [
-            (g, team) for g in games for team, start, end in stints
-            if start <= g.season <= end and team in (g.home, g.away) and g.season >= 1950
+        starts = [
+            (game, team) for game in games
+            for team, name in ((game.home, game.home_qb), (game.away, game.away_qb))
+            if name.casefold() == qb.name.casefold()
         ]
-        if not team_games:
+        if not starts:
             continue
-        key = qb.name.casefold()
-        started = sum(
-            1 for g, team in team_games
-            if (g.home_qb if g.home == team else g.away_qb).casefold() == key
+        expected = sum(
+            1 if game.winner == team else -1 if game.loser == team else 0
+            for game, team in starts
         )
         checked += 1
-        if started != len(team_games):
-            start_issues.append(
-                f"{qb.name}: {len(team_games)} team games in stint seasons, "
-                f"{started} started by him ({len(team_games) - started} by others)"
-            )
+        walk = walks.get(qb.id, {})
+        timeline = annual.get(qb.id, {})
+        if (walk.get("wins", 0) + walk.get("losses", 0) + walk.get("ties", 0) != len(starts)
+                or walk.get("final") != expected
+                or timeline.get("games") != len(starts)
+                or timeline.get("final") != expected):
+            start_issues.append(f"{qb.name}: Games charts disagree with {len(starts)} named starts, net {expected}")
     results.append(_check(
-        "qb_starts", "QB Games walk vs. games the QB actually started",
-        "1950-present", checked, start_issues, warn_only=True,
-        note="Informational: the Games metric follows the team during a QB's stint seasons, "
-             "so games he missed (injury, benching, rest) are still counted.",
+        "qb_starts", "QB Games charts match actual starts",
+        "1950-present", checked, start_issues,
+        note="Injury-shortened starts count; games started by someone else do not. "
+             "Pre-1950 starter names are unavailable and are not inferred from team stints.",
+    ))
+    view_issues = []
+    checked = 0
+    for mode in ("all", "regular", "playoffs", "superbowls"):
+        for metric in ("td", "int", "td_int"):
+            walks = build_qb_td_int(games, None, mode, metric)
+            annual = {series["id"]: series for series in build_qb_timeline(games, None, mode, metric)["series"]}
+            for series in walks["series"]:
+                checked += 1
+                timeline = annual.get(series["id"], {})
+                if series["final"] != timeline.get("final") or series["games"] != timeline.get("games"):
+                    view_issues.append(f"{series['name']} {mode} {metric}: passing views disagree")
+    results.append(_check(
+        "qb_view_consistency", "QB passing totals agree across game and season views",
+        "1999-present, every metric and game mode", checked, view_issues,
     ))
     return results
 
@@ -519,6 +536,159 @@ def _ncaaf_checks() -> list[dict]:
     return results
 
 
+def _year_ranges(seasons: list[int]) -> str:
+    ranges: list[str] = []
+    for season in sorted(seasons):
+        if ranges and season == int(ranges[-1].split("-")[-1]) + 1:
+            ranges[-1] = f"{ranges[-1].split('-')[0]}-{season}"
+        else:
+            ranges.append(str(season))
+    return ", ".join(ranges)
+
+
+def _outcomes(counter: Counter) -> str:
+    return "".join(sorted(counter.elements())) or "none"
+
+
+def _ncaaf_history_checks() -> list[dict]:
+    """Pre-2001 game-level coverage, checked against the published season and series data."""
+    teams = tuple(NCAAF_TEAMS)
+    load_team_histories(teams)
+    history = load_historical_games(teams)
+    today = dt.date.today()
+    last_complete = today.year - (1 if today.month >= 2 else 2)
+    results = []
+
+    records: dict[tuple[str, int], list[int]] = defaultdict(lambda: [0, 0, 0])
+    bowls: dict[tuple[str, int], Counter] = defaultdict(Counter)
+    for team, team_games in history.items():
+        for game in team_games:
+            records[(team, game.season)]["WLT".index(game.result)] += 1
+            if game.is_bowl:
+                bowls[(team, game.season)][game.result] += 1
+
+    coverage_issues = [f"{team}: historical scores page unavailable" for team in teams if not history[team]]
+    checked = 0
+    for team in teams:
+        seasons = [s for s in SEASON_RECORDS.get(team, {}) if s < NCAAF_START_SEASON]
+        checked += len(seasons)
+        missing = [s for s in seasons if (team, s) not in records]
+        if missing:
+            coverage_issues.append(
+                f"{team}: {len(missing)} of {len(seasons)} seasons are season totals only ({_year_ranges(missing)})"
+            )
+    results.append(_check(
+        "ncaaf_game_coverage", "Every pre-2001 season has game-by-game results",
+        f"program start-{NCAAF_START_SEASON - 1}", checked, coverage_issues, warn_only=True,
+        note="Seasons listed here are missing from the historical scores database (mostly "
+             "pre-1905 and seasons it does not rate), so the chart uses one season-total step.",
+    ))
+
+    record_issues = []
+    bowl_issues = []
+    checked = 0
+    for team in teams:
+        for season, published in sorted(SEASON_RECORDS.get(team, {}).items()):
+            if season >= NCAAF_START_SEASON or (team, season) not in records:
+                continue
+            checked += 1
+            ours = tuple(records[(team, season)])
+            if ours != published:
+                record_issues.append(
+                    f"{team} {season}: game-by-game {'-'.join(map(str, ours))}, "
+                    f"published {'-'.join(map(str, published))}"
+                )
+            expected = Counter(BOWL_OUTCOMES.get(team, {}).get(season, ()))
+            if bowls[(team, season)] != expected:
+                bowl_issues.append(
+                    f"{team} {season}: bowl results {_outcomes(bowls[(team, season)])}, "
+                    f"published {_outcomes(expected)}"
+                )
+    results.append(_check(
+        "ncaaf_history_records", "Pre-2001 game results add up to published season records",
+        f"program start-{NCAAF_START_SEASON - 1}", checked, record_issues, warn_only=True,
+        note="Two independent sources; early-era differences are usually disputed games or "
+             "later forfeits. Charts follow the game-by-game results.",
+    ))
+    results.append(_check(
+        "ncaaf_history_bowls", "Pre-2001 bowl games match published bowl outcomes",
+        f"program start-{NCAAF_START_SEASON - 1}", checked, bowl_issues, warn_only=True,
+    ))
+
+    h2h_issues = []
+    checked = 0
+    covered = {(team, season) for team, season in records}
+    for rivalry_id, rivalry in RIVALRIES.items():
+        first, second = rivalry["teams"]
+        reference = Counter(
+            (season, winner) for season, _, winner, a, b in load_head_to_head(rivalry_id)
+            if season < NCAAF_START_SEASON and {a, b} == {first, second}
+            and (first, season) in covered and (second, season) in covered
+        )
+        ours = Counter(
+            (g.season, None if g.result == "T" else first if g.result == "W" else second)
+            for g in history[first] if g.opponent == second and g.season < NCAAF_START_SEASON
+            and (second, g.season) in covered
+        )
+        checked += sum(reference.values())
+        for season, winner in sorted((reference - ours).elements(), key=str):
+            h2h_issues.append(f"{rivalry['name']} {season}: series table winner {winner or 'tie'} not in game-by-game data")
+        for season, winner in sorted((ours - reference).elements(), key=str):
+            h2h_issues.append(f"{rivalry['name']} {season}: game-by-game winner {winner or 'tie'} not in series table")
+    results.append(_check(
+        "ncaaf_history_head_to_head", "Pre-2001 rivalry games match the published series tables",
+        f"series start-{NCAAF_START_SEASON - 1}", checked, h2h_issues,
+        note="Only seasons covered game-by-game for both programs are compared.",
+    ))
+
+    modern = get_ncaaf_games()
+    synthetic = {(g.home, g.season) for g in modern if g.away.startswith("BOWL-")}
+    result_issues = []
+    score_issues = []
+    checked = 0
+    for team in teams:
+        ours_games = [
+            (g.season, g.home_score if g.home == team else g.away_score,
+             g.away_score if g.home == team else g.home_score)
+            for g in modern
+            if team in (g.home, g.away) and NCAAF_START_SEASON <= g.season <= last_complete
+            and not g.away.startswith("BOWL-")
+        ]
+        reference_games = [
+            (g.season, g.points_for, g.points_against) for g in history[team]
+            if NCAAF_START_SEASON <= g.season <= last_complete
+            and not (g.is_bowl and (team, g.season) in synthetic)
+        ]
+        checked += len(reference_games)
+        ours, reference = Counter(ours_games), Counter(reference_games)
+        for season, pf, pa in sorted((reference - ours).elements()):
+            score_issues.append(f"{team} {season}: {pf}-{pa} in historical scores, not in cfbfastR")
+        for season, pf, pa in sorted((ours - reference).elements()):
+            score_issues.append(f"{team} {season}: {pf}-{pa} in cfbfastR, not in historical scores")
+
+        def outcome(season: int, pf: int, pa: int) -> tuple[int, str]:
+            return season, "W" if pf > pa else "L" if pf < pa else "T"
+
+        ours_results = Counter(outcome(*game) for game in ours_games)
+        reference_results = Counter(outcome(*game) for game in reference_games)
+        for season, result in sorted((reference_results - ours_results).elements()):
+            result_issues.append(f"{team} {season}: a {result} in historical scores is missing from cfbfastR")
+        for season, result in sorted((ours_results - reference_results).elements()):
+            result_issues.append(f"{team} {season}: a {result} in cfbfastR is missing from historical scores")
+    results.append(_check(
+        "ncaaf_modern_cross_source", "cfbfastR matches the historical scores database game-for-game",
+        f"{NCAAF_START_SEASON}-{last_complete}", checked, result_issues,
+        note="Wins, losses and ties per season must agree. Bowl games reconstructed from "
+             "published outcomes (no scores) are excluded.",
+    ))
+    results.append(_check(
+        "ncaaf_modern_scores", "cfbfastR scores match the historical scores database",
+        f"{NCAAF_START_SEASON}-{last_complete}", checked, score_issues, warn_only=True,
+        note="Score-only differences do not change any chart; they flag typos in one source.",
+    ))
+    return results
+
+
 # --------------------------------------------------------------------------- report
 
 LIMITATIONS = [
@@ -527,7 +697,9 @@ LIMITATIONS = [
     "NFL quarterback names (used for the starts check) are only present from 1950.",
     "NFL 1920-1998 games come from a single source (FiveThirtyEight); only the 1999-2022 "
     "overlap can be cross-checked game-for-game against nflverse.",
-    "NCAAF before 2001 is season-level (published W-L-T per season), not game-by-game.",
+    "NCAAF before 2001 is game-by-game from James Howell's historical scores database; "
+    "seasons it does not cover (mostly pre-1905) fall back to one published season total "
+    "(see the game-by-game coverage check).",
     "NCAAF bowl results for most seasons before 2023 come from the published histories, "
     "because cfbfastR schedules omit pre-2023 postseason games.",
     "The current, in-progress season is excluded from length and bracket checks.",
@@ -554,6 +726,10 @@ def _build() -> dict:
         checks += _ncaaf_checks()
     except Exception as exc:  # noqa: BLE001
         checks.append(_error("ncaaf", "NCAAF checks", "2001-present", exc))
+    try:
+        checks += _ncaaf_history_checks()
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_error("ncaaf_history", "NCAAF game-by-game history checks", "pre-2001", exc))
 
     summary = Counter(check["status"] for check in checks)
     return {
