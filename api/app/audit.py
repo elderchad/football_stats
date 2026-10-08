@@ -37,8 +37,7 @@ from .ncaaf_history import (
     load_head_to_head,
     load_team_histories,
 )
-from .ncaaf_scores import load_historical_games
-from .qb_records import build_qb_records, build_qb_td_int, build_qb_timeline
+from .qb_records import _resolved_stints, last_start_seasons
 from .qb_stats import STATS_CACHE_DIR, STATS_START_SEASON, get_qb_game_stats
 from .quarterbacks import QUARTERBACKS
 from .teams import normalize

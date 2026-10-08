@@ -13,8 +13,6 @@ import type {
   NcaafTeam,
 } from './api'
 import NcaafModeControl from './NcaafModeControl'
-import useSelection from './useSelection'
-import NcaafRankings from './NcaafRankings'
 import ZoomChart, { stepTicks } from './ZoomChart'
 import type { ChartEvent, ChartRow } from './ZoomChart'
 
